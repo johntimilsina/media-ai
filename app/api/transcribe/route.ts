@@ -29,6 +29,9 @@ export async function POST(req: NextRequest) {
     // Get the form data
     const formData = await req.formData()
     const file = formData.get("file") as File | null
+    const sourceLanguage = (formData.get("sourceLanguage") as string) || "auto"
+    const includeTimestamps = formData.get("includeTimestamps") === "true"
+    const enableTranslation = formData.get("enableTranslation") === "true"
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 })
@@ -36,6 +39,9 @@ export async function POST(req: NextRequest) {
 
     console.log(
       `File received: ${file.name}, size: ${file.size}, type: ${file.type}`
+    )
+    console.log(
+      `Options: sourceLanguage=${sourceLanguage}, includeTimestamps=${includeTimestamps}, enableTranslation=${enableTranslation}`
     )
 
     // Create a unique temporary directory for this request
@@ -54,9 +60,23 @@ export async function POST(req: NextRequest) {
     console.log(`File saved to: ${filePath}`)
     console.log(`Output directory: ${outputDir}`)
 
-    // Run whisper command
-    console.log("Running whisper command...")
-    const whisperCmd = `${process.env.NEXT_PUBLIC_WHISPER_PATH} "${filePath}" --language en --task transcribe --output_dir "${outputDir}"`
+    // Build the whisper command with options
+    let whisperCmd = `${
+      process.env.NEXT_PUBLIC_WHISPER_PATH || "whisper"
+    } "${filePath}" --output_dir "${outputDir}"`
+
+    // Add language option if not auto
+    if (sourceLanguage !== "auto") {
+      whisperCmd += ` --language ${sourceLanguage}`
+    }
+
+    // Add task option (transcribe or translate)
+    whisperCmd += enableTranslation ? " --task translate" : " --task transcribe"
+
+    // Add timestamp option
+    if (includeTimestamps) {
+      whisperCmd += " --verbose False"
+    }
 
     console.log(`Executing command: ${whisperCmd}`)
     const { stdout, stderr } = await execAsync(whisperCmd)
@@ -64,22 +84,54 @@ export async function POST(req: NextRequest) {
     console.log("Whisper stdout:", stdout)
     if (stderr) console.error("Whisper stderr:", stderr)
 
-    // Find and read the transcript file
+    // Find and read the transcript files
     const files = readdirSync(outputDir)
     console.log("Files in output directory:", files)
 
-    const txtFile = files.find((f) => f.endsWith(".vtt"))
-    if (!txtFile) {
-      throw new Error("No transcript file found in output directory")
+    // Get the transcript
+    let transcript = ""
+    let translation = ""
+    let detectedLanguage = null
+
+    // Read the transcript file
+    const txtFile = files.find((f) => f.endsWith(".txt"))
+    if (txtFile) {
+      const transcriptPath = path.join(outputDir, txtFile)
+      const content = readFileSync(transcriptPath, "utf-8")
+
+      if (enableTranslation) {
+        translation = content
+      } else {
+        transcript = content
+      }
     }
 
-    const transcriptPath = path.join(outputDir, txtFile)
-    console.log(`Reading transcript from: ${transcriptPath}`)
-    const transcript = readFileSync(transcriptPath, "utf-8")
+    // Read the VTT file for timestamps if requested
+    if (includeTimestamps) {
+      const vttFile = files.find((f) => f.endsWith(".vtt"))
+      if (vttFile) {
+        const vttPath = path.join(outputDir, vttFile)
+        const content = readFileSync(vttPath, "utf-8")
 
-    // Return the transcript
+        if (enableTranslation) {
+          translation = content
+        } else {
+          transcript = content
+        }
+      }
+    }
+
+    // Try to extract detected language from stdout
+    const langMatch = stdout.match(/Detected language: ([a-z]+)/)
+    if (langMatch && langMatch[1]) {
+      detectedLanguage = langMatch[1]
+    }
+
+    // Return the results
     return NextResponse.json({
       transcript,
+      translation: translation || null,
+      detectedLanguage,
       success: true,
       fileName: file.name,
     })
