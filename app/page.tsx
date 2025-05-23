@@ -69,9 +69,7 @@ export default function Home() {
 
   return (
     <main className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6 text-center">
-        Whisper Transcriber 🎤
-      </h1>
+      <h1 className="text-3xl font-bold mb-6 text-center">Media AI 🎤</h1>
 
       <div className="bg-white p-6 rounded-lg shadow-md mb-6">
         <div className="mb-4">
