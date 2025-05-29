@@ -255,7 +255,7 @@ export default function Home() {
       <div className="flex flex-col items-center space-y-4 mb-8">
         <h1 className="text-4xl font-bold tracking-tight">Media AI</h1>
         <p className="text-lg text-gray-600 max-w-2xl text-center">
-          Transcribe and translate audio/video files using local Whisper
+          Transcribe and translate audio/video files
         </p>
       </div>
 
@@ -462,7 +462,7 @@ export default function Home() {
               <div className="bg-blue-50 p-4 rounded-md text-blue-800 text-sm">
                 <p className="flex items-center">
                   <Info className="h-4 w-4 mr-2" />
-                  Whisper is processing your file. This can take some time for
+                  Media AI is processing your file. This can take some time for
                   longer files.
                   {enableTranslation &&
                     " Translation will be included in the process."}
