@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get("file") as File | null
     const sourceLanguage = (formData.get("sourceLanguage") as string) || "auto"
-    const includeTimestamps = formData.get("includeTimestamps") === "true"
-    const enableTranslation = formData.get("enableTranslation") === "true"
+    const targetLanguage = (formData.get("targetLanguage") as string) || "auto"
+    const includeTimecodes = formData.get("includeTimecodes") === "true"
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 })
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       `File received: ${file.name}, size: ${file.size}, type: ${file.type}`
     )
     console.log(
-      `Options: sourceLanguage=${sourceLanguage}, includeTimestamps=${includeTimestamps}, enableTranslation=${enableTranslation}`
+      `Options: sourceLanguage=${sourceLanguage}, targetLanguage=${targetLanguage}, includeTimecodes=${includeTimecodes}`
     )
 
     // Create a unique temporary directory for this request
@@ -60,71 +60,133 @@ export async function POST(req: NextRequest) {
     console.log(`File saved to: ${filePath}`)
     console.log(`Output directory: ${outputDir}`)
 
-    // Build the whisper command with options
-    let whisperCmd = `${
+    // Determine if we need translation
+    const needsTranslation = targetLanguage !== "auto"
+    const isTranslatingToEnglish = targetLanguage === "en"
+
+    let transcript = ""
+    let translation = ""
+    let detectedLanguage = null
+
+    // First, always do transcription to get the original text
+    let transcribeCmd = `${
       process.env.NEXT_PUBLIC_WHISPER_PATH || "whisper"
     } "${filePath}" --output_dir "${outputDir}"`
 
     // Add language option if not auto
     if (sourceLanguage !== "auto") {
-      whisperCmd += ` --language ${sourceLanguage}`
+      transcribeCmd += ` --language ${sourceLanguage}`
     }
 
-    // Add task option (transcribe or translate)
-    whisperCmd += enableTranslation ? " --task translate" : " --task transcribe"
+    // Always transcribe first
+    transcribeCmd += " --task transcribe"
 
-    // Add timestamp option
-    if (includeTimestamps) {
-      whisperCmd += " --verbose False"
+    // Add output format based on timecode preference
+    if (includeTimecodes) {
+      transcribeCmd += " --output_format vtt"
+    } else {
+      transcribeCmd += " --output_format txt"
     }
 
-    console.log(`Executing command: ${whisperCmd}`)
-    const { stdout, stderr } = await execAsync(whisperCmd)
+    console.log(`Executing transcription command: ${transcribeCmd}`)
+    const { stdout: transcribeStdout, stderr: transcribeStderr } =
+      await execAsync(transcribeCmd)
 
-    console.log("Whisper stdout:", stdout)
-    if (stderr) console.error("Whisper stderr:", stderr)
+    console.log("Transcription stdout:", transcribeStdout)
+    if (transcribeStderr)
+      console.error("Transcription stderr:", transcribeStderr)
 
-    // Find and read the transcript files
+    // Read transcription results
     const files = readdirSync(outputDir)
-    console.log("Files in output directory:", files)
+    console.log("Files in transcription output directory:", files)
 
     // Get the transcript
-    let transcript = ""
-    let translation = ""
-    let detectedLanguage = null
-
-    // Read the transcript file
-    const txtFile = files.find((f) => f.endsWith(".txt"))
-    if (txtFile) {
-      const transcriptPath = path.join(outputDir, txtFile)
-      const content = readFileSync(transcriptPath, "utf-8")
-
-      if (enableTranslation) {
-        translation = content
-      } else {
-        transcript = content
-      }
-    }
-
-    // Read the VTT file for timestamps if requested
-    if (includeTimestamps) {
+    if (includeTimecodes) {
       const vttFile = files.find((f) => f.endsWith(".vtt"))
       if (vttFile) {
-        const vttPath = path.join(outputDir, vttFile)
-        const content = readFileSync(vttPath, "utf-8")
-
-        if (enableTranslation) {
-          translation = content
-        } else {
-          transcript = content
-        }
+        const transcriptPath = path.join(outputDir, vttFile)
+        transcript = readFileSync(transcriptPath, "utf-8")
+      }
+    } else {
+      const txtFile = files.find((f) => f.endsWith(".txt"))
+      if (txtFile) {
+        const transcriptPath = path.join(outputDir, txtFile)
+        transcript = readFileSync(transcriptPath, "utf-8")
       }
     }
 
     // Try to extract detected language from stdout
-    const langMatch = stdout.match(/Detected language: ([a-z]+)/)
+    const langMatch = transcribeStdout.match(/Detected language: ([a-z]+)/)
     if (langMatch && langMatch[1]) {
       detectedLanguage = langMatch[1]
+    }
+
+    // If translation is needed and it's to English, use Whisper's translate task
+    if (needsTranslation && isTranslatingToEnglish) {
+      console.log("Performing translation to English using Whisper")
+
+      // Create a new output directory for translation
+      const translationOutputDir = path.join(
+        os.tmpdir(),
+        `translation_${randomUUID()}`
+      )
+      await mkdir(translationOutputDir, { recursive: true })
+
+      let translateCmd = `${
+        process.env.NEXT_PUBLIC_WHISPER_PATH || "whisper"
+      } "${filePath}" --output_dir "${translationOutputDir}"`
+
+      // Add language option if not auto
+      if (sourceLanguage !== "auto") {
+        translateCmd += ` --language ${sourceLanguage}`
+      } else if (detectedLanguage) {
+        translateCmd += ` --language ${detectedLanguage}`
+      }
+
+      // Use translate task for English translation
+      translateCmd += " --task translate"
+
+      // Add output format based on timecode preference
+      if (includeTimecodes) {
+        translateCmd += " --output_format vtt"
+      } else {
+        translateCmd += " --output_format txt"
+      }
+
+      console.log(`Executing translation command: ${translateCmd}`)
+      const { stdout: translateStdout, stderr: translateStderr } =
+        await execAsync(translateCmd)
+
+      console.log("Translation stdout:", translateStdout)
+      if (translateStderr) console.error("Translation stderr:", translateStderr)
+
+      // Read translation results
+      const translationFiles = readdirSync(translationOutputDir)
+      console.log("Files in translation output directory:", translationFiles)
+
+      if (includeTimecodes) {
+        const translationVttFile = translationFiles.find((f) =>
+          f.endsWith(".vtt")
+        )
+        if (translationVttFile) {
+          const translationPath = path.join(
+            translationOutputDir,
+            translationVttFile
+          )
+          translation = readFileSync(translationPath, "utf-8")
+        }
+      } else {
+        const translationTxtFile = translationFiles.find((f) =>
+          f.endsWith(".txt")
+        )
+        if (translationTxtFile) {
+          const translationPath = path.join(
+            translationOutputDir,
+            translationTxtFile
+          )
+          translation = readFileSync(translationPath, "utf-8")
+        }
+      }
     }
 
     // Return the results
