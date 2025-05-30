@@ -45,6 +45,11 @@ import {
   Edit,
   Play,
   Pause,
+  Subtitles,
+  Maximize,
+  Minimize,
+  Volume2,
+  VolumeX,
 } from "lucide-react"
 import { WHISPER_LANGUAGES } from "@/lib/languages"
 
@@ -79,9 +84,22 @@ export default function Home() {
     TimecodeSegment[]
   >([])
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [followTranscript, setFollowTranscript] = useState(true)
+  const [currentSegmentIndex, setCurrentSegmentIndex] = useState<number | null>(
+    null
+  )
+  const [activeTranscriptTab, setActiveTranscriptTab] = useState("transcript")
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const mediaContainerRef = useRef<HTMLDivElement>(null)
+  const transcriptContainerRef = useRef<HTMLDivElement>(null)
+  const translationContainerRef = useRef<HTMLDivElement>(null)
 
   // Update editable content when transcript/translation changes
   useEffect(() => {
@@ -117,6 +135,106 @@ export default function Home() {
       setProgress(0)
     }
   }, [loading])
+
+  // Media player time update and follow transcript
+  useEffect(() => {
+    const mediaElement = audioRef.current || videoRef.current
+    if (!mediaElement) return
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(mediaElement.currentTime)
+
+      if (followTranscript && includeTimecodes) {
+        const segments =
+          activeTranscriptTab === "transcript"
+            ? transcriptSegments
+            : translationSegments
+        const currentIndex = segments.findIndex(
+          (segment) =>
+            mediaElement.currentTime >= segment.startSeconds &&
+            mediaElement.currentTime <= segment.endSeconds
+        )
+
+        if (currentIndex !== -1 && currentIndex !== currentSegmentIndex) {
+          setCurrentSegmentIndex(currentIndex)
+
+          // Scroll to the current segment
+          const container =
+            activeTranscriptTab === "transcript"
+              ? transcriptContainerRef.current
+              : translationContainerRef.current
+          const segmentElement = container?.querySelector(
+            `[data-segment-index="${currentIndex}"]`
+          )
+
+          if (segmentElement && container) {
+            segmentElement.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            })
+          }
+        }
+      }
+    }
+
+    const handleLoadedMetadata = () => {
+      setDuration(mediaElement.duration)
+    }
+
+    mediaElement.addEventListener("timeupdate", handleTimeUpdate)
+    mediaElement.addEventListener("loadedmetadata", handleLoadedMetadata)
+
+    return () => {
+      mediaElement.removeEventListener("timeupdate", handleTimeUpdate)
+      mediaElement.removeEventListener("loadedmetadata", handleLoadedMetadata)
+    }
+  }, [
+    followTranscript,
+    includeTimecodes,
+    transcriptSegments,
+    translationSegments,
+    currentSegmentIndex,
+    activeTranscriptTab,
+  ])
+
+  // Handle fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange)
+    }
+  }, [])
+
+  const toggleFullscreen = () => {
+    if (!mediaContainerRef.current) return
+
+    if (!document.fullscreenElement) {
+      mediaContainerRef.current.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`)
+      })
+    } else {
+      document.exitFullscreen()
+    }
+  }
+
+  const toggleMute = () => {
+    const mediaElement = audioRef.current || videoRef.current
+    if (mediaElement) {
+      mediaElement.muted = !mediaElement.muted
+      setIsMuted(mediaElement.muted)
+    }
+  }
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`
+  }
 
   const parseVTT = (vttContent: string): TimecodeSegment[] => {
     const segments: TimecodeSegment[] = []
@@ -273,6 +391,7 @@ export default function Home() {
     setDetectedLanguage(null)
     setProcessingTime(null)
     setIsPlaying(false)
+    setCurrentSegmentIndex(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
@@ -435,21 +554,33 @@ export default function Home() {
                 <div className="space-y-2">
                   <Label>Preview</Label>
                   <div className="border rounded-lg p-4 bg-gray-50">
-                    {file.type.startsWith("audio/") ? (
-                      <audio ref={audioRef} controls className="w-full">
-                        <source src={fileUrl} type={file.type} />
-                        Your browser does not support the audio element.
-                      </audio>
-                    ) : (
-                      <video
-                        ref={videoRef}
-                        controls
-                        className="w-full max-h-64"
-                      >
-                        <source src={fileUrl} type={file.type} />
-                        Your browser does not support the video element.
-                      </video>
-                    )}
+                    <div className="relative" ref={mediaContainerRef}>
+                      {file.type.startsWith("audio/") ? (
+                        <div className="bg-black rounded-lg p-4 flex flex-col items-center">
+                          <audio
+                            ref={audioRef}
+                            controls
+                            className="w-full"
+                            onPlay={() => setIsPlaying(true)}
+                            onPause={() => setIsPlaying(false)}
+                          >
+                            <source src={fileUrl} type={file.type} />
+                            Your browser does not support the audio element.
+                          </audio>
+                        </div>
+                      ) : (
+                        <video
+                          ref={videoRef}
+                          controls
+                          className="w-full rounded-lg"
+                          onPlay={() => setIsPlaying(true)}
+                          onPause={() => setIsPlaying(false)}
+                        >
+                          <source src={fileUrl} type={file.type} />
+                          Your browser does not support the video element.
+                        </video>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -602,72 +733,151 @@ export default function Home() {
         </TabsContent>
 
         <TabsContent value="results">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Media Player Column */}
             {file && fileUrl && (
               <div className="lg:col-span-1">
-                <Card>
+                <Card className="h-full">
                   <CardHeader>
                     <CardTitle className="text-lg">Media Player</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {file.type.startsWith("audio/") ? (
-                      <div className="space-y-4">
-                        <audio
-                          ref={audioRef}
-                          controls
-                          className="w-full"
+                    <div
+                      className="relative rounded-lg overflow-hidden bg-black"
+                      ref={mediaContainerRef}
+                    >
+                      {file.type.startsWith("audio/") ? (
+                        <div className="p-4 flex flex-col items-center">
+                          <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-b from-gray-800 to-gray-900 rounded-lg mb-4">
+                            <FileAudio className="h-24 w-24 text-white opacity-50" />
+                          </div>
+                          <audio
+                            ref={audioRef}
+                            className="w-full hidden"
+                            onPlay={() => setIsPlaying(true)}
+                            onPause={() => setIsPlaying(false)}
+                          >
+                            <source src={fileUrl} type={file.type} />
+                            Your browser does not support the audio element.
+                          </audio>
+                        </div>
+                      ) : (
+                        <video
+                          ref={videoRef}
+                          className="w-full aspect-video object-contain"
                           onPlay={() => setIsPlaying(true)}
                           onPause={() => setIsPlaying(false)}
                         >
                           <source src={fileUrl} type={file.type} />
-                          Your browser does not support the audio element.
-                        </audio>
-                        <div className="flex items-center justify-center">
-                          <Button
-                            onClick={togglePlayPause}
-                            variant="outline"
-                            size="sm"
+                          Your browser does not support the video element.
+                        </video>
+                      )}
+
+                      {/* Custom media controls */}
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                        <div className="flex flex-col gap-2">
+                          {/* Progress bar */}
+                          <div
+                            className="w-full bg-gray-600 h-1 rounded-full overflow-hidden cursor-pointer"
+                            onClick={(e) => {
+                              const rect =
+                                e.currentTarget.getBoundingClientRect()
+                              const pos = (e.clientX - rect.left) / rect.width
+                              const mediaElement =
+                                audioRef.current || videoRef.current
+                              if (mediaElement) {
+                                mediaElement.currentTime = pos * duration
+                              }
+                            }}
                           >
-                            {isPlaying ? (
-                              <Pause className="h-4 w-4" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </Button>
+                            <div
+                              className="bg-white h-full"
+                              style={{
+                                width: `${(currentTime / duration) * 100}%`,
+                              }}
+                            ></div>
+                          </div>
+
+                          {/* Controls */}
+                          <div className="flex items-center justify-between text-white">
+                            <div className="flex items-center gap-3">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-white hover:bg-white/20"
+                                onClick={togglePlayPause}
+                              >
+                                {isPlaying ? (
+                                  <Pause className="h-5 w-5" />
+                                ) : (
+                                  <Play className="h-5 w-5" />
+                                )}
+                              </Button>
+
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-white hover:bg-white/20"
+                                onClick={toggleMute}
+                              >
+                                {isMuted ? (
+                                  <VolumeX className="h-5 w-5" />
+                                ) : (
+                                  <Volume2 className="h-5 w-5" />
+                                )}
+                              </Button>
+
+                              <span className="text-xs">
+                                {formatTime(currentTime)} /{" "}
+                                {formatTime(duration)}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className={`h-8 text-xs text-white hover:bg-white/20 ${
+                                  followTranscript ? "bg-white/30" : ""
+                                }`}
+                                onClick={() =>
+                                  setFollowTranscript(!followTranscript)
+                                }
+                              >
+                                <Subtitles className="h-4 w-4 mr-1" />
+                                {followTranscript ? "Following" : "Follow Text"}
+                              </Button>
+
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-white hover:bg-white/20"
+                                onClick={toggleFullscreen}
+                              >
+                                {isFullscreen ? (
+                                  <Minimize className="h-5 w-5" />
+                                ) : (
+                                  <Maximize className="h-5 w-5" />
+                                )}
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ) : (
-                      <video
-                        ref={videoRef}
-                        controls
-                        className="w-full"
-                        onPlay={() => setIsPlaying(true)}
-                        onPause={() => setIsPlaying(false)}
-                      >
-                        <source src={fileUrl} type={file.type} />
-                        Your browser does not support the video element.
-                      </video>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {/* Results Column */}
-            <div
-              className={file && fileUrl ? "lg:col-span-2" : "lg:col-span-3"}
-            >
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                      <CardTitle>Results</CardTitle>
-                      <CardDescription>
-                        {file && `Results for ${file.name}`}
-                      </CardDescription>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+
+                    <div className="flex flex-wrap gap-2 mt-4">
+                      <Badge
+                        variant={followTranscript ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => setFollowTranscript(!followTranscript)}
+                      >
+                        <Subtitles className="h-3 w-3 mr-1" />
+                        {followTranscript
+                          ? "Auto-Follow On"
+                          : "Auto-Follow Off"}
+                      </Badge>
+
                       {detectedLanguage && (
                         <Badge
                           variant="outline"
@@ -678,6 +888,7 @@ export default function Home() {
                             detectedLanguage}
                         </Badge>
                       )}
+
                       {processingTime && (
                         <Badge
                           variant="outline"
@@ -687,20 +898,37 @@ export default function Home() {
                           {processingTime.toFixed(1)}s
                         </Badge>
                       )}
-                      {includeTimecodes && (
-                        <Badge
-                          variant="outline"
-                          className="flex items-center gap-1"
-                        >
-                          <Clock className="h-3 w-3" />
-                          Timecodes
-                        </Badge>
-                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Results Column */}
+            <div
+              className={file && fileUrl ? "lg:col-span-1" : "lg:col-span-2"}
+            >
+              <Card className="h-full">
+                <CardHeader>
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <CardTitle>Transcription Results</CardTitle>
+                      <CardDescription>
+                        {file && `Results for ${file.name}`}
+                      </CardDescription>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <Tabs defaultValue="transcript" className="w-full">
+                  <Tabs
+                    defaultValue="transcript"
+                    className="w-full"
+                    value={activeTranscriptTab}
+                    onValueChange={(value) => {
+                      setActiveTranscriptTab(value)
+                      setCurrentSegmentIndex(null)
+                    }}
+                  >
                     <TabsList className="grid w-full grid-cols-2">
                       <TabsTrigger value="transcript">Transcript</TabsTrigger>
                       <TabsTrigger value="translation" disabled={!translation}>
@@ -751,11 +979,20 @@ export default function Home() {
                       </div>
 
                       {includeTimecodes && transcriptSegments.length > 0 ? (
-                        <div className="space-y-2 max-h-[400px] overflow-y-auto border rounded-md p-4">
+                        <div
+                          ref={transcriptContainerRef}
+                          className="space-y-1 max-h-[400px] overflow-y-auto border rounded-md p-4"
+                        >
                           {transcriptSegments.map((segment, index) => (
                             <div
                               key={index}
-                              className="flex gap-3 p-2 hover:bg-gray-50 rounded"
+                              data-segment-index={index}
+                              className={`flex gap-3 p-2 rounded transition-colors ${
+                                currentSegmentIndex === index &&
+                                followTranscript
+                                  ? "bg-blue-100 border-l-4 border-blue-500"
+                                  : "hover:bg-gray-50 border-l-4 border-transparent"
+                              }`}
                             >
                               <Button
                                 variant="ghost"
@@ -871,11 +1108,20 @@ export default function Home() {
                       </div>
 
                       {includeTimecodes && translationSegments.length > 0 ? (
-                        <div className="space-y-2 max-h-[400px] overflow-y-auto border rounded-md p-4">
+                        <div
+                          ref={translationContainerRef}
+                          className="space-y-1 max-h-[400px] overflow-y-auto border rounded-md p-4"
+                        >
                           {translationSegments.map((segment, index) => (
                             <div
                               key={index}
-                              className="flex gap-3 p-2 hover:bg-gray-50 rounded"
+                              data-segment-index={index}
+                              className={`flex gap-3 p-2 rounded transition-colors ${
+                                currentSegmentIndex === index &&
+                                followTranscript
+                                  ? "bg-blue-100 border-l-4 border-blue-500"
+                                  : "hover:bg-gray-50 border-l-4 border-transparent"
+                              }`}
                             >
                               <Button
                                 variant="ghost"
