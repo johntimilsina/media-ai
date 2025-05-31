@@ -52,6 +52,7 @@ import {
   VolumeX,
 } from "lucide-react"
 import { WHISPER_LANGUAGES } from "@/lib/languages"
+import SpeakerAnalysis from "@/components/speaker-analysis"
 
 interface TimecodeSegment {
   start: string
@@ -472,13 +473,16 @@ export default function Home() {
         onValueChange={setActiveTab}
         className="max-w-6xl mx-auto"
       >
-        <TabsList className="grid grid-cols-3 mb-8">
+        <TabsList className="grid grid-cols-4 mb-8">
           <TabsTrigger value="upload">Upload</TabsTrigger>
           <TabsTrigger value="processing" disabled={!loading}>
             Processing
           </TabsTrigger>
           <TabsTrigger value="results" disabled={!transcript && !translation}>
             Results
+          </TabsTrigger>
+          <TabsTrigger value="speaker-analysis" disabled={!file}>
+            Speaker Analysis
           </TabsTrigger>
         </TabsList>
 
@@ -1194,6 +1198,9 @@ export default function Home() {
               </Card>
             </div>
           </div>
+        </TabsContent>
+        <TabsContent value="speaker-analysis">
+          <SpeakerAnalysis file={file} />
         </TabsContent>
       </Tabs>
     </main>
