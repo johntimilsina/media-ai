@@ -65,6 +65,13 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await response.json()
+
+    // Check if the result contains an error
+    if (result.error) {
+      console.error("Pyannote API returned error:", result.error)
+      throw new Error(`Pyannote analysis failed: ${result.error}`)
+    }
+
     console.log("Pyannote analysis completed successfully")
 
     return NextResponse.json({
